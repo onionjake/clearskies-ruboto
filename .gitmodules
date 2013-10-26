@@ -1,0 +1,3 @@
+[submodule "src/clearskies"]
+	path = src/clearskies
+	url = https://github.com/jewel/clearskies.git
