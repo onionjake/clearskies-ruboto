@@ -1,6 +1,6 @@
 # Clearskies Ruboto
 
-This is an android version of jewel/clearskies
+This is an android client implementing the [ClearSkies](https://github.com/jewel/clearskies) protocol.
 
 # Setup
 
