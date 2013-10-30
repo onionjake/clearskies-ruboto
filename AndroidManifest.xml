@@ -11,6 +11,7 @@
         <activity android:configChanges='orientation|screenSize' android:exported='false' android:name='org.ruboto.SplashActivity' android:noHistory='true'/>
         <activity android:exported='false' android:name='org.ruboto.RubotoDialog' android:theme='@android:style/Theme.Dialog'/>
         <service android:exported='false' android:name='org.ruboto.RubotoService'/>
+        <service android:name='com.clearskies.ClearSkiesService'/>
     </application>
-    <uses-sdk android:minSdkVersion='10' android:targetSdkVersion='18'/>
+    <uses-sdk android:minSdkVersion='8' android:targetSdkVersion='10'/>
 </manifest>

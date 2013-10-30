@@ -5,3 +5,5 @@ bin
 gen
 tmp
 local.properties
+.ruby-version
+adb_logcat.log
