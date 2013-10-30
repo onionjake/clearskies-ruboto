@@ -1,7 +1,10 @@
 require 'ruboto/util/toast'
 
-require 'clearskies/lib/daemon'
-require 'clearskies/lib/control_client'
+# FIXME don't make lib part of the search path
+$: << 'lib'
+
+require 'daemon'
+require 'control_client'
 
 # Services are complicated and don't really make sense unless you
 # show the interaction between the Service and other parts of your
@@ -12,8 +15,15 @@ require 'clearskies/lib/control_client'
 class ClearSkiesService
   def onStartCommand(intent, flags, startId)
     toast 'Hello from the service'
-    Daemon.run
+    Thread.new {
+      Daemon.run
+    }
+    FileUtils.mkdir_p '/tmp/shared_files'
+    ControlClient.issue :add_share, {
+      code: 'SYNCWTOKGXCDRWWDW',
+      path: '/tmp/shared_file'
+    }
     toast 'Hello from the service after'
-    android.app.Service::START_NOT_STICKY
+    android.app.Service::START_STICKY
   end
 end

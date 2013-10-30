@@ -14,4 +14,5 @@
         <service android:name='com.clearskies.ClearSkiesService'/>
     </application>
     <uses-sdk android:minSdkVersion='8' android:targetSdkVersion='10'/>
+    <uses-permission android:name="android.permission.INTERNET" /> 
 </manifest>
