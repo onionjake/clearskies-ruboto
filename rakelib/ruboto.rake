@@ -34,15 +34,15 @@ adb_version_str = `adb version`
 (puts "Unrecognized adb version: #$1"; exit 1) unless adb_version_str =~ /Android Debug Bridge version (\d+\.\d+\.\d+)/
 (puts "adb version 1.0.31 or later required.  Version found: #$1"; exit 1) unless Gem::Version.new($1) >= Gem::Version.new('1.0.31')
 android_home = ENV['ANDROID_HOME']
-android_home = android_home.gsub("\\", "/") unless android_home.nil?
 if android_home.nil?
   if (adb_path = which('adb'))
     android_home = File.dirname(File.dirname(adb_path))
+    ENV['ANDROID_HOME'] = android_home
   else
     abort 'You need to set the ANDROID_HOME environment variable.'
   end
 else
-  android_home.gsub! '\\', '/'
+  android_home = android_home.gsub('\\', '/')
 end
 
 # FIXME(uwe): Simplify when we stop supporting Android SDK < 22: Don't look in platform-tools for dx
@@ -54,23 +54,23 @@ unless DX_FILENAME
   exit 1
 end
 
-def manifest;
+def manifest
   @manifest ||= REXML::Document.new(File.read(MANIFEST_FILE))
 end
 
-def package;
+def package
   manifest.root.attribute('package')
 end
 
-def build_project_name;
+def build_project_name
   @build_project_name ||= REXML::Document.new(File.read('build.xml')).elements['project'].attribute(:name).value
 end
 
-def scripts_path;
+def scripts_path
   @sdcard_path ||= "/mnt/sdcard/Android/data/#{package}/files/scripts"
 end
 
-def app_files_path;
+def app_files_path
   @app_files_path ||= "/data/data/#{package}/files"
 end
 
@@ -91,8 +91,9 @@ JARS = Dir[File.expand_path 'libs/*.jar'] - JRUBY_JARS
 RESOURCE_FILES = Dir[File.expand_path 'res/**/*']
 JAVA_SOURCE_FILES = Dir[File.expand_path 'src/**/*.java']
 RUBY_SOURCE_FILES = Dir[File.expand_path 'src/**/*.rb']
+OTHER_SOURCE_FILES = Dir[File.expand_path 'src/**/*'] - JAVA_SOURCE_FILES - RUBY_SOURCE_FILES
 CLASSES_CACHE = "#{PROJECT_DIR}/bin/#{build_project_name}-debug-unaligned.apk.d"
-APK_DEPENDENCIES = [:patch_dex, MANIFEST_FILE, RUBOTO_CONFIG_FILE, BUNDLE_JAR, CLASSES_CACHE] + JRUBY_JARS + JARS + JAVA_SOURCE_FILES + RESOURCE_FILES + RUBY_SOURCE_FILES
+APK_DEPENDENCIES = [:patch_dex, MANIFEST_FILE, RUBOTO_CONFIG_FILE, BUNDLE_JAR, CLASSES_CACHE] + JRUBY_JARS + JARS + JAVA_SOURCE_FILES + RESOURCE_FILES + RUBY_SOURCE_FILES + OTHER_SOURCE_FILES
 KEYSTORE_FILE = (key_store = File.readlines('ant.properties').grep(/^key.store=/).first) ? File.expand_path(key_store.chomp.sub(/^key.store=/, '').sub('${user.home}', '~')) : "#{build_project_name}.keystore"
 KEYSTORE_ALIAS = (key_alias = File.readlines('ant.properties').grep(/^key.alias=/).first) ? key_alias.chomp.sub(/^key.alias=/, '') : build_project_name
 APK_FILE_REGEXP = /^-rw-r--r--\s+(?:system|\d+\s+\d+)\s+(?:system|\d+)\s+(\d+)\s+(\d{4}-\d{2}-\d{2} \d{2}:\d{2}|\w{3} \d{2}\s+(?:\d{4}|\d{2}:\d{2}))\s+(.*)$/
@@ -235,27 +236,25 @@ end
 
 file RUBOTO_CONFIG_FILE
 
+task :jruby_adapter => JRUBY_ADAPTER_FILE
 file JRUBY_ADAPTER_FILE => RUBOTO_CONFIG_FILE do
   require 'yaml'
-  if (heap_alloc = YAML.load(File.read(RUBOTO_CONFIG_FILE))['heap_alloc'])
-    config = <<EOF
-            // BEGIN Ruboto HeapAlloc
-            @SuppressWarnings("unused")
-            byte[] arrayForHeapAllocation = new byte[#{heap_alloc} * 1024 * 1024];
-            arrayForHeapAllocation = null;
-            // END Ruboto HeapAlloc
-EOF
-  else
-    config = <<EOF
-            // BEGIN Ruboto HeapAlloc
-            // @SuppressWarnings("unused")
-            // byte[] arrayForHeapAllocation = new byte[13 * 1024 * 1024];
-            // arrayForHeapAllocation = null;
-            // END Ruboto HeapAlloc
-EOF
+  marker_topic ='Ruboto HeapAlloc'
+  begin_marker = "// BEGIN #{marker_topic}"
+  end_marker = "// END #{marker_topic}"
+  unless (heap_alloc = YAML.load(File.read(RUBOTO_CONFIG_FILE))['heap_alloc'])
+    heap_alloc = 13
+    comment = '// '
   end
+  config = <<EOF
+            #{begin_marker}
+            #{comment}@SuppressWarnings("unused")
+            #{comment}byte[] arrayForHeapAllocation = new byte[#{heap_alloc} * 1024 * 1024];
+            #{comment}arrayForHeapAllocation = null;
+            #{end_marker}
+EOF
   source = File.read(JRUBY_ADAPTER_FILE)
-  heap_alloc_pattern = %r{^\s*// BEGIN Ruboto HeapAlloc\n.*^\s*// END Ruboto HeapAlloc\n}m
+  heap_alloc_pattern = %r{^\s*#{begin_marker}\n.*^\s*#{end_marker}\n}m
   File.open(JRUBY_ADAPTER_FILE, 'w') { |f| f << source.sub(heap_alloc_pattern, config) }
 end
 
@@ -281,6 +280,9 @@ task :update_scripts => %w(install:quick) do
   update_scripts
 end
 
+desc 'Copy scripts to emulator or device and reload'
+task :boing => %w(update_scripts:reload)
+
 namespace :update_scripts do
   desc 'Copy scripts to emulator and restart the app'
   task :restart => APK_DEPENDENCIES - RUBY_SOURCE_FILES do |t|
@@ -299,7 +301,7 @@ namespace :update_scripts do
     else
       update_scripts
     end
-    start_app # FIXME(uwe): Should trigger reload of updated scripts
+    start_app
   end
 
   desc 'Copy scripts to emulator and reload'
@@ -309,7 +311,13 @@ namespace :update_scripts do
       start_app
     else
       scripts = update_scripts
-      reload_scripts(scripts) if scripts
+      if scripts
+        if app_running?
+          reload_scripts(scripts)
+        else
+          start_app
+        end
+      end
     end
   end
 end
@@ -356,7 +364,8 @@ file BUNDLE_JAR => [GEM_FILE, GEM_LOCK_FILE] do
   next unless File.exists? GEM_FILE
   puts "Generating #{BUNDLE_JAR}"
   require 'bundler'
-  if Gem::Version.new(Bundler::VERSION) <= Gem::Version.new('1.3.5')
+  # FIXME(uwe): Issue #547 https://github.com/ruboto/ruboto/issues/547
+  if true || Gem::Version.new(Bundler::VERSION) <= Gem::Version.new('1.5.0')
     require 'bundler/vendored_thor'
 
     # Store original RubyGems/Bundler environment
@@ -380,6 +389,10 @@ file BUNDLE_JAR => [GEM_FILE, GEM_LOCK_FILE] do
     definition = Bundler.definition
     definition.validate_ruby!
     Bundler::Installer.install(Bundler.root, definition)
+    unless Dir["#{BUNDLE_PATH}/bundler/gems/"].empty?
+      system("mkdir -p '#{BUNDLE_PATH}/gems'")
+      system("mv #{BUNDLE_PATH}/bundler/gems/* #{BUNDLE_PATH}/gems/")
+    end
 
     # Restore RUBY_ENGINE (limit the scope of this hack)
     old_verbose, $VERBOSE = $VERBOSE, nil
@@ -389,7 +402,7 @@ file BUNDLE_JAR => [GEM_FILE, GEM_LOCK_FILE] do
       $VERBOSE = old_verbose
     end
     Gem.platforms = platforms
-    Gem.paths = gem_paths["GEM_PATH"]
+    Gem.paths = gem_paths['GEM_PATH']
   else
     # Bundler.settings[:platform] = Gem::Platform::DALVIK
     sh "bundle install --gemfile #{GEM_FILE} --path=#{BUNDLE_PATH} --platform=dalvik#{sdk_level}"
@@ -481,7 +494,7 @@ Java::arjdbc.jdbc.AdapterJavaService.new.basicLoad(JRuby.runtime)
             # ODOT
 
             # FIXME(uwe): Extract files with case sensitive names for ARJDBC 1.2.7-1.3.x
-            puts `jar xf #{jar} arjdbc/mssql/MSSQLRubyJdbcConnection.class arjdbc/sqlite3/SQLite3RubyJdbcConnection.class`
+            puts `jar xf #{jar} arjdbc/postgresql/PostgreSQLRubyJdbcConnection.class arjdbc/mssql/MSSQLRubyJdbcConnection.class arjdbc/sqlite3/SQLite3RubyJdbcConnection.class`
             # EMXIF
 
           elsif jar =~ /shared\/jopenssl.jar$/
@@ -525,6 +538,35 @@ Java::json.ext.ParserService.new.basicLoad(JRuby.runtime)
     `jar #{i == 0 ? 'c' : 'u'}f "#{BUNDLE_JAR}" -C "#{gem_dir}/lib" .`
   end
   FileUtils.rm_rf BUNDLE_PATH
+end
+
+desc 'Log activity execution, accepts optional logcat filter'
+task :log, [:filter] do |t, args|
+  puts '--- clearing logcat'
+  `adb logcat -c`
+  filter = args[:filter] ? args[:filter] : '' # filter log with filter-specs like TAG:LEVEL TAG:LEVEL ... '*:S'
+  logcat_cmd = "adb logcat ActivityManager #{filter}" # we always need ActivityManager logging to catch activity start
+  puts "--- starting logcat: #{logcat_cmd}"
+  IO.popen logcat_cmd do |logcat|
+    puts "--- waiting for activity #{package}/.#{main_activity} ..."
+    activity_started = false
+    started_regex = Regexp.new "^\\I/ActivityManager.+Start proc #{package} for activity #{package}/\\.#{main_activity}: pid=(?<pid>\\d+)"
+    restarted_regex = Regexp.new "^\\I/ActivityManager.+START u0 {cmp=#{package}/org.ruboto.RubotoActivity.+} from pid (?<pid>\\d+)"
+    related_regex = Regexp.new "#{package}|#{main_activity}"
+    pid_regex = nil
+    logcat.each_line do |line|
+      if (activity_start_match = started_regex.match(line) || restarted_regex.match(line))
+        activity_started = true
+        pid = activity_start_match[:pid]
+        pid_regex = Regexp.new "\\( *#{pid}\\): "
+        puts "--- activity PID=#{pid}"
+      end
+      if activity_started && (line =~ pid_regex || line =~ related_regex)
+        puts "#{Time.now.strftime('%Y%m%d %H%M%S.%6N')} #{line}"
+      end
+    end
+    puts '--- logcat closed'
+  end
 end
 
 # Methods
@@ -717,17 +759,20 @@ def update_scripts
   return nil
 end
 
+def app_running?
+  `adb shell ps | egrep -e " #{package}\r$"`.size > 0
+end
+
 def start_app
   `adb shell am start -a android.intent.action.MAIN -n #{package}/.#{main_activity}`
 end
 
 # Triggers reload of updated scripts and restart of the current activity
 def reload_scripts(scripts)
-  scripts.each.with_index do |s, i|
-    cmd = "adb shell am broadcast -a android.intent.action.VIEW -e file #{s} #{'-e restart YES' if i == (scripts.size - 1)}"
-    puts cmd
-    system cmd
-  end
+  s = scripts.map{|s| s.gsub(/[&;]/){|m| "&#{m[0]}"}}.join(';')
+  cmd = %Q{adb shell am broadcast -a android.intent.action.VIEW -e reload "#{s}"}
+  puts cmd
+  system cmd
 end
 
 def stop_app
